@@ -5,7 +5,8 @@
   a tiny open-source flight radar for your desk — now with a touchscreen
 </h6>
 <p align=center>
-  <img src="https://github.com/user-attachments/assets/2ccb2063-d15c-4180-8e3c-ae3a81c814ff" alt="drawing" width="400"/>
+  <img src="docs/images/MicroRadarTouch_1.jpg" alt="radar screen showing live aircraft" width="380"/>
+  <img src="docs/images/MicroRadarTouch_2.jpg" alt="enclosure mounted on the wall" width="380"/>
 </p>
 <p align=center>
   <a href="#hardware">HARDWARE</a> - <a href="#features">FEATURES</a> - <a href="#usage">USAGE</a> - <a href="#faq">FAQ</a>
