@@ -53,7 +53,8 @@ Where to enter your credentials is covered in [Configuration](#configuration) be
 |---|---|---|
 | Tap an aircraft | Radar | Open its detail screen |
 | Tap | Detail screen | Return to radar |
-| Double-tap | Radar | Cycle through configurable zoom presets (briefly shows the new range) |
+| Double-tap | Radar | Zoom out — cycle to the next larger zoom preset (briefly shows the new range) |
+| Triple-tap | Radar | Zoom in — cycle to the next smaller zoom preset (briefly shows the new range) |
 | Swipe up/down | Radar | Open a scrollable list of tracked aircraft |
 | Swipe up/down | List | Scroll the list |
 | Tap a row | List | Open that aircraft's detail screen |

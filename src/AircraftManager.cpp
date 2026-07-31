@@ -59,21 +59,18 @@ void AircraftManager::Initialise()
     rad = configServer.GetStoredString("radius").toDouble();
 
     // configuration
-    const String renderText = configServer.GetStoredString("infotext");
-    const String renderTris = configServer.GetStoredString("triangle");
-    if (!renderText.isEmpty()) displayInfoText = renderText == "true" ? true : false;
-    if (!renderTris.isEmpty()) displayTriangles = renderTris == "true" ? true : false;
+    auto loadBoolPref = [&](const char* key, bool& target) {
+        const String pref = configServer.GetStoredString(key);
+        if (!pref.isEmpty()) target = pref == "true";
+    };
 
-    const String zoomTapPref = configServer.GetStoredString("zoomtap");
-    const String listSwipePref = configServer.GetStoredString("listswipe");
-    const String lockPref = configServer.GetStoredString("lock");
-    const String heatmapPref = configServer.GetStoredString("heatmap");
-    const String typeIconPref = configServer.GetStoredString("typeicon");
-    if (!zoomTapPref.isEmpty())   zoomTapEnabled = zoomTapPref == "true";
-    if (!listSwipePref.isEmpty()) listSwipeEnabled = listSwipePref == "true";
-    if (!lockPref.isEmpty())      lockEnabled = lockPref == "true";
-    if (!heatmapPref.isEmpty())   heatmapEnabled = heatmapPref == "true";
-    if (!typeIconPref.isEmpty())  typeIconEnabled = typeIconPref == "true";
+    loadBoolPref("infotext", displayInfoText);
+    loadBoolPref("triangle", displayTriangles);
+    loadBoolPref("zoomtap", zoomTapEnabled);
+    loadBoolPref("listswipe", listSwipeEnabled);
+    loadBoolPref("lock", lockEnabled);
+    loadBoolPref("heatmap", heatmapEnabled);
+    loadBoolPref("typeicon", typeIconEnabled);
 
     const String unitSystemPref = configServer.GetStoredString("unitsystem");
     if (unitSystemPref == "aviation")     unitSystem = UnitSystem::Aviation;
@@ -109,6 +106,21 @@ void AircraftManager::MergeAircraftStates(const std::vector<Aircraft>& aircraft,
     }
 }
 
+bool AircraftManager::FetchAircraftStates(const std::vector<std::pair<String, String>>& params, const std::vector<std::pair<String, String>>& headers, std::vector<Aircraft>& outAircraft, const char* context)
+{
+    HttpResult result = http.Get("https://opensky-network.org/api/states/all", params, headers);
+
+    if (!result.success) {
+        Serial.printf("[WARN] %s failed: %s\n", context, result.errorMessage.c_str());
+        return false;
+    }
+
+    JsonDocument doc;
+    deserializeJson(doc, result.response);
+    outAircraft = JsonParser::ParseArray<Aircraft>(doc["states"]);
+    return true;
+}
+
 void AircraftManager::Update()
 {
     unsigned long now = millis();
@@ -127,30 +139,22 @@ void AircraftManager::Update()
         if (!token.isEmpty()) headers.push_back({ "Authorization", "Bearer " + token });
 
         // request
-        HttpResult result = http.Get(
-            "https://opensky-network.org/api/states/all",
+        std::vector<Aircraft> aircraft;
+        const bool fetched = FetchAircraftStates(
             {
               {"lamin", String(lat - rad)},
               {"lamax", String(lat + rad)},
               {"lomin", String(lon - rad)},
               {"lomax", String(lon + rad)}
             },
-            headers
+            headers, aircraft, "OpenSky API request"
         );
 
         // If request failed, skip this update
-        if (!result.success) {
-            Serial.print("[WARN] OpenSky API request failed: ");
-            Serial.println(result.errorMessage);
-            return;
-        }
+        if (!fetched) return;
 
         // track
-        JsonDocument doc;
-        deserializeJson(doc, result.response);
-        auto aircraft = JsonParser::ParseArray<Aircraft>(doc["states"]);
         now = millis(); // override with post-parse timestamp
-
         MergeAircraftStates(aircraft, now);
 
         // remove any planes that disappeared from the feed, except one actively locked -
@@ -168,21 +172,9 @@ void AircraftManager::Update()
         // locked aircraft may have left the configured radius - fetch it directly by icao24,
         // bypassing the bounding box (OpenSky ANDs bbox + icao24, so bbox must be omitted here)
         if (!lockedIcao.isEmpty()) {
-            HttpResult lockResult = http.Get(
-                "https://opensky-network.org/api/states/all",
-                { {"icao24", lockedIcao} },
-                headers
-            );
-
-            if (lockResult.success) {
-                JsonDocument lockDoc;
-                deserializeJson(lockDoc, lockResult.response);
-                auto lockedAircraft = JsonParser::ParseArray<Aircraft>(lockDoc["states"]);
+            std::vector<Aircraft> lockedAircraft;
+            if (FetchAircraftStates({ {"icao24", lockedIcao} }, headers, lockedAircraft, "Locked aircraft fetch"))
                 MergeAircraftStates(lockedAircraft, millis());
-            } else {
-                Serial.print("[WARN] Locked aircraft fetch failed: ");
-                Serial.println(lockResult.errorMessage);
-            }
         }
     }
 }
@@ -193,6 +185,7 @@ Gesture AircraftManager::PollGesture()
     constexpr unsigned long LONG_PRESS_MS = 600;
     constexpr int MOVE_TOLERANCE_SQ = 15 * 15;
     constexpr int SWIPE_THRESHOLD = 40;
+    constexpr int MAX_TAP_STREAK = 3;
 
     int32_t x = -1;
     int32_t y = -1;
@@ -226,24 +219,30 @@ Gesture AircraftManager::PollGesture()
     }
     touchWasDown = touchDown;
 
-    // double-tap only matters for zoom on the radar screen - elsewhere, fire taps immediately
-    const bool needsDoubleTapDetection = zoomTapEnabled && uiMode == UiMode::Radar;
+    // multi-tap only matters for zoom on the radar screen - elsewhere, fire taps immediately
+    const bool needsMultiTapDetection = zoomTapEnabled && uiMode == UiMode::Radar;
 
-    if (gesture == Gesture::Tap && needsDoubleTapDetection) {
-        const bool followsRecentTap = pendingTap && (now - lastTapTime) <= DOUBLE_TAP_MS;
+    if (gesture == Gesture::Tap && needsMultiTapDetection) {
+        const bool continuesStreak = tapStreak > 0 && (now - lastTapTime) <= DOUBLE_TAP_MS;
+        tapStreak = continuesStreak ? tapStreak + 1 : 1;
         lastTapTime = now;
-        pendingTap = !followsRecentTap;
-        return followsRecentTap ? Gesture::DoubleTap : Gesture::None;
+
+        if (tapStreak >= MAX_TAP_STREAK) {
+            tapStreak = 0;
+            return Gesture::TripleTap;
+        }
+        return Gesture::None;
     }
 
     if (gesture != Gesture::None) {
-        pendingTap = false;
+        tapStreak = 0;
         return gesture;
     }
 
-    if (pendingTap && (now - lastTapTime) > DOUBLE_TAP_MS) {
-        pendingTap = false;
-        return Gesture::Tap;
+    if (tapStreak > 0 && (now - lastTapTime) > DOUBLE_TAP_MS) {
+        const int resolvedStreak = tapStreak;
+        tapStreak = 0;
+        return resolvedStreak >= 2 ? Gesture::DoubleTap : Gesture::Tap;
     }
 
     return Gesture::None;
@@ -253,7 +252,7 @@ void AircraftManager::HandleRadarGesture(Gesture gesture)
 {
     switch (gesture) {
         case Gesture::Tap:
-            if (TryHitLockBadge(touchLastX, touchLastY)) {
+            if (TryHitLockBadge(touchLastY)) {
                 selectedIcao = lockedIcao;
                 uiMode = UiMode::Detail;
             } else if (TrySelectAircraftAtTouch(touchLastX, touchLastY)) {
@@ -262,7 +261,11 @@ void AircraftManager::HandleRadarGesture(Gesture gesture)
             return;
 
         case Gesture::DoubleTap:
-            if (zoomTapEnabled) CycleZoom();
+            if (zoomTapEnabled) CycleZoom(true);
+            return;
+
+        case Gesture::TripleTap:
+            if (zoomTapEnabled) CycleZoom(false);
             return;
 
         case Gesture::SwipeUp:
@@ -284,6 +287,8 @@ void AircraftManager::HandleRadarGesture(Gesture gesture)
 
 void AircraftManager::HandleListGesture(Gesture gesture)
 {
+    if (gesture == Gesture::None) return;
+
     const auto icaos = GetSortedVisibleIcaos();
 
     switch (gesture) {
@@ -296,7 +301,7 @@ void AircraftManager::HandleListGesture(Gesture gesture)
             return;
 
         case Gesture::Tap: {
-            const int row = HitTestListRow(touchLastY, icaos.size());
+            const int row = HitTestListRow(touchLastY);
             const int index = listScrollIndex + row;
             if (row >= 0 && index < (int)icaos.size()) {
                 selectedIcao = icaos[index];
@@ -330,17 +335,20 @@ void AircraftManager::HandleDetailGesture(Gesture gesture)
     }
 }
 
-void AircraftManager::CycleZoom()
+void AircraftManager::CycleZoom(bool zoomOut)
 {
     if (zoomPresets.empty()) return;
 
     constexpr double EPSILON = 0.001;
+    double next = zoomOut ? zoomPresets.front() : zoomPresets.back();
 
-    double next = zoomPresets.front();
-    for (double preset : zoomPresets) {
-        if (preset > rad + EPSILON) {
-            next = preset;
-            break;
+    if (zoomOut) {
+        for (double preset : zoomPresets) {
+            if (preset > rad + EPSILON) { next = preset; break; }
+        }
+    } else {
+        for (auto it = zoomPresets.rbegin(); it != zoomPresets.rend(); ++it) {
+            if (*it < rad - EPSILON) { next = *it; break; }
         }
     }
 
@@ -372,7 +380,7 @@ std::vector<String> AircraftManager::GetSortedVisibleIcaos() const
     return result;
 }
 
-int AircraftManager::HitTestListRow(int touchY, int rowCount) const
+int AircraftManager::HitTestListRow(int touchY) const
 {
     constexpr int HALF_ROW = LIST_ROW_HEIGHT / 2;
     if (touchY < LIST_START_Y - HALF_ROW) return -1;
@@ -382,7 +390,7 @@ int AircraftManager::HitTestListRow(int touchY, int rowCount) const
     return row;
 }
 
-bool AircraftManager::TryHitLockBadge(int touchX, int touchY) const
+bool AircraftManager::TryHitLockBadge(int touchY) const
 {
     if (lockedIcao.isEmpty()) return false;
     return touchY >= (LOCK_BADGE_Y - 10) && touchY <= (LOCK_BADGE_Y + 14);
@@ -507,22 +515,25 @@ std::pair<int, int> AircraftManager::ProjectCoordinateToScreen(float predLat, fl
     return { x, y };
 }
 
+String AircraftManager::FormatMeasurement(float metricValue, float aviationValue, const char* metricUnit, const char* aviationUnit) const
+{
+    if (unitSystem == UnitSystem::Aviation) return String((int)aviationValue) + aviationUnit;
+    return String(metricValue) + metricUnit;
+}
+
 String AircraftManager::FormatAltitude(float metres) const
 {
-    if (unitSystem == UnitSystem::Aviation) return String((int)(metres * 3.28084f)) + " ft";
-    return String(metres) + " m";
+    return FormatMeasurement(metres, metres * 3.28084f, " m", " ft");
 }
 
 String AircraftManager::FormatSpeed(float metersPerSecond) const
 {
-    if (unitSystem == UnitSystem::Aviation) return String((int)(metersPerSecond * 1.94384f)) + " kt";
-    return String(metersPerSecond) + " m/s";
+    return FormatMeasurement(metersPerSecond, metersPerSecond * 1.94384f, " m/s", " kt");
 }
 
 String AircraftManager::FormatVerticalRate(float metersPerSecond) const
 {
-    if (unitSystem == UnitSystem::Aviation) return String((int)(metersPerSecond * 196.850394f)) + " ft/min";
-    return String(metersPerSecond) + " m/s";
+    return FormatMeasurement(metersPerSecond, metersPerSecond * 196.850394f, " m/s", " ft/min");
 }
 
 String AircraftManager::FormatRingDistance(double radiusDegrees) const

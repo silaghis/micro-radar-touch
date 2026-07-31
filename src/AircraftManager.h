@@ -13,6 +13,7 @@ enum class Gesture
     None,
     Tap,
     DoubleTap,
+    TripleTap,
     LongPress,
     SwipeUp,
     SwipeDown
@@ -61,7 +62,7 @@ private:
     int32_t touchLastX = 0;
     int32_t touchLastY = 0;
     unsigned long touchStartTime = 0;
-    bool pendingTap = false;
+    int tapStreak = 0;
     unsigned long lastTapTime = 0;
 
     std::vector<double> zoomPresets;
@@ -81,13 +82,15 @@ private:
     void HandleRadarGesture(Gesture gesture);
     void HandleListGesture(Gesture gesture);
     void HandleDetailGesture(Gesture gesture);
-    void CycleZoom();
+    void CycleZoom(bool zoomOut);
     void RequestManualRefresh();
     void MergeAircraftStates(const std::vector<Aircraft>& aircraft, unsigned long now);
+    bool FetchAircraftStates(const std::vector<std::pair<String, String>>& params, const std::vector<std::pair<String, String>>& headers, std::vector<Aircraft>& outAircraft, const char* context);
     std::vector<String> GetSortedVisibleIcaos() const;
-    int HitTestListRow(int touchY, int rowCount) const;
-    bool TryHitLockBadge(int touchX, int touchY) const;
+    int HitTestListRow(int touchY) const;
+    bool TryHitLockBadge(int touchY) const;
 
+    String FormatMeasurement(float metricValue, float aviationValue, const char* metricUnit, const char* aviationUnit) const;
     String FormatAltitude(float metres) const;
     String FormatSpeed(float metersPerSecond) const;
     String FormatVerticalRate(float metersPerSecond) const;
