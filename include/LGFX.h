@@ -7,6 +7,7 @@ class LGFX : public lgfx::LGFX_Device
     lgfx::Panel_GC9A01 _panel;
     lgfx::Bus_SPI _bus;
     lgfx::Light_PWM _light;
+    lgfx::Touch_CST816S _touch;
 
 public:
     LGFX(void)
@@ -27,6 +28,9 @@ public:
             cfg.pin_cs = 10;
             cfg.pin_rst = -1;
             cfg.pin_busy = -1;
+            cfg.panel_width = 240;
+            cfg.panel_height = 240;
+            cfg.offset_rotation = 0;
             // cfg.rgb_order = true;
             _panel.config(cfg);
         }
@@ -36,6 +40,23 @@ public:
             cfg.invert = false;
             _light.config(cfg);
             _panel.setLight(&_light);
+        }
+        {
+            auto cfg = _touch.config();
+            cfg.i2c_port = 0;
+            cfg.i2c_addr = 0x15;
+            cfg.pin_sda = 4;
+            cfg.pin_scl = 5;
+            cfg.pin_int = 0;
+            cfg.pin_rst = 1;
+            cfg.freq = 400000;
+            cfg.x_min = 0;
+            cfg.x_max = 239;
+            cfg.y_min = 0;
+            cfg.y_max = 239;
+            cfg.offset_rotation = 0;
+            _touch.config(cfg);
+            _panel.setTouch(&_touch);
         }
         setPanel(&_panel);
     }

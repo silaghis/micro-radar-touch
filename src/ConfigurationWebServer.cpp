@@ -1,5 +1,6 @@
 #include "ConfigurationWebServer.h"
 #include <ESPmDNS.h>
+#include "WiFiManagerHelpers.h"
 
 // HTML stored in flash
 // %PLACEHOLDER% tokens are substituted at serve time by the template processor
@@ -55,6 +56,15 @@ static const char CONFIG_HTML[] PROGMEM = R"(
                 </label>
 
                 <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <span>Zoom Presets (deg, comma-separated):</span>
+                    <input
+                        name="zoompresets"
+                        type="text"
+                        value='%ZOOMPRESETS%'
+                        class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
+                </label>
+
+                <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                     <span>OpenSkyAPI Client ID:</span>
                     <input
                         name="opensky-id"
@@ -70,7 +80,7 @@ static const char CONFIG_HTML[] PROGMEM = R"(
                         class="flex-1 border border-green-500 bg-gray-900 w-full px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
                 </label>
 
-                <div class="flex flex-col sm:flex-row gap-4 sm:justify-between">
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
                         <span>Radar sweep:</span>
                         <input
@@ -95,7 +105,58 @@ static const char CONFIG_HTML[] PROGMEM = R"(
                             %TRIANGLE%
                             class="px-3 sm:px-1 accent-green-500">
                     </label>
+                    <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span>Double-tap Zoom:</span>
+                        <input
+                            name="zoomtap"
+                            type="checkbox"
+                            %ZOOMTAP%
+                            class="px-3 sm:px-1 accent-green-500">
+                    </label>
+                    <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span>Aircraft List (swipe):</span>
+                        <input
+                            name="listswipe"
+                            type="checkbox"
+                            %LISTSWIPE%
+                            class="px-3 sm:px-1 accent-green-500">
+                    </label>
+                    <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span>Aircraft Lock (long-press):</span>
+                        <input
+                            name="lock"
+                            type="checkbox"
+                            %LOCK%
+                            class="px-3 sm:px-1 accent-green-500">
+                    </label>
+                    <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span>Altitude Heatmap:</span>
+                        <input
+                            name="heatmap"
+                            type="checkbox"
+                            %HEATMAP%
+                            class="px-3 sm:px-1 accent-green-500">
+                    </label>
+                    <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                        <span>Aircraft Type Icons:</span>
+                        <input
+                            name="typeicon"
+                            type="checkbox"
+                            %TYPEICON%
+                            class="px-3 sm:px-1 accent-green-500">
+                    </label>
                 </div>
+
+                <label class="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                    <span>Units:</span>
+                    <select
+                        name="unitsystem"
+                        class="border border-green-500 bg-gray-900 px-3 py-2 text-lg sm:text-base sm:px-1 sm:py-0">
+                        <option value="metric" %UNITSYSTEM_METRIC%>Metric (m, m/s)</option>
+                        <option value="aviation" %UNITSYSTEM_AVIATION%>Aviation (ft, kt)</option>
+                        <option value="none" %UNITSYSTEM_NONE%>No Units (name only)</option>
+                    </select>
+                </label>
 
                 <div class="flex flex-col sm:flex-row gap-4 sm:gap-5">
                     <input
@@ -108,12 +169,29 @@ static const char CONFIG_HTML[] PROGMEM = R"(
             </form>
         </fieldset>
 
+        <details class="max-w-2xl mx-auto sm:mx-10 mt-4 text-md sm:text-sm">
+            <summary class="cursor-pointer select-none">Wi-Fi Settings</summary>
+            <div class="border border-green-500 p-4 mt-2 flex flex-col gap-2">
+                <p>This disconnects the device from its current Wi-Fi network and restarts it into setup mode.</p>
+                <p>Connect to the hotspot "%WIFI_SETUP_NAME%" from your phone or laptop to pick a new network.</p>
+                <button id="wifi-reset" class="bg-green-500 text-black mt-2 px-4 py-3 text-lg sm:text-base sm:px-2 sm:py-0 self-start cursor-pointer">Change Wi-Fi Network</button>
+                <div id="wifi-result" class="mt-2"></div>
+            </div>
+        </details>
+
         <script>
             document.getElementById('cfg').addEventListener('submit', function(e) {
                 e.preventDefault();
                 fetch(this.action, { method: 'POST', body: new FormData(this) })
                     .then(r => r.text())
                     .then(html => document.getElementById('result').innerHTML = html);
+            });
+
+            document.getElementById('wifi-reset').addEventListener('click', function() {
+                if (!confirm('This will disconnect the device from Wi-Fi and restart it into setup mode. Continue?')) return;
+                fetch('/wifi-reset', { method: 'POST' })
+                    .then(r => r.text())
+                    .then(html => document.getElementById('wifi-result').innerHTML = html);
             });
         </script>
     </body>
@@ -140,6 +218,13 @@ void ConfigurationWebServer::Initialise() {
         const String scanlineEnabled = prefs.getString("scanline", "true");
         const String infoTextEnabled = prefs.getString("infotext", "true");
         const String triangleEnabled = prefs.getString("triangle", "true");
+        const String zoomTapEnabled = prefs.getString("zoomtap", "true");
+        const String listSwipeEnabled = prefs.getString("listswipe", "true");
+        const String lockEnabled = prefs.getString("lock", "true");
+        const String heatmapEnabled = prefs.getString("heatmap", "false");
+        const String typeIconEnabled = prefs.getString("typeicon", "false");
+        const String zoomPresets = prefs.getString("zoompresets", "0.5,1,2,2.49");
+        const String unitSystem = prefs.getString("unitsystem", "metric");
         prefs.end();
 
         // mask secret before sending to client
@@ -149,16 +234,27 @@ void ConfigurationWebServer::Initialise() {
         AsyncWebServerResponse* response = request->beginResponse(
             200, "text/html",
             (const uint8_t*)CONFIG_HTML, sizeof(CONFIG_HTML) - 1,
-            [latitude, longitude, radius, openskyClientId, openskySecret, scanlineEnabled, infoTextEnabled, triangleEnabled]
+            [latitude, longitude, radius, openskyClientId, openskySecret, scanlineEnabled, infoTextEnabled, triangleEnabled,
+             zoomTapEnabled, listSwipeEnabled, lockEnabled, heatmapEnabled, typeIconEnabled, zoomPresets, unitSystem]
             (const String& var) -> String {
                 if (var == "LATITUDE")       return latitude;
                 if (var == "LONGITUDE")      return longitude;
                 if (var == "RADIUS")         return radius;
+                if (var == "ZOOMPRESETS")    return zoomPresets;
                 if (var == "OPENSKY_ID")     return openskyClientId;
                 if (var == "OPENSKY_SECRET") return openskySecret;
                 if (var == "SCANLINE")       return scanlineEnabled == "true" ? "checked" : "";
                 if (var == "INFOTEXT")       return infoTextEnabled == "true" ? "checked" : "";
                 if (var == "TRIANGLE")       return triangleEnabled == "true" ? "checked" : "";
+                if (var == "ZOOMTAP")        return zoomTapEnabled == "true" ? "checked" : "";
+                if (var == "LISTSWIPE")      return listSwipeEnabled == "true" ? "checked" : "";
+                if (var == "LOCK")           return lockEnabled == "true" ? "checked" : "";
+                if (var == "HEATMAP")        return heatmapEnabled == "true" ? "checked" : "";
+                if (var == "TYPEICON")       return typeIconEnabled == "true" ? "checked" : "";
+                if (var == "UNITSYSTEM_METRIC")   return unitSystem == "metric" ? "selected" : "";
+                if (var == "UNITSYSTEM_AVIATION") return unitSystem == "aviation" ? "selected" : "";
+                if (var == "UNITSYSTEM_NONE")     return unitSystem == "none" ? "selected" : "";
+                if (var == "WIFI_SETUP_NAME") return String(WiFiManagerHelpers::WiFiManagerName);
                 return "";
             }
         );
@@ -185,6 +281,7 @@ void ConfigurationWebServer::Initialise() {
         TrySaveParam("latitude");
         TrySaveParam("longitude");
         TrySaveParam("radius");
+        TrySaveParam("zoompresets");
         TrySaveParam("opensky-id");
 
         const auto* param = request->getParam("opensky-secret", true);
@@ -198,9 +295,30 @@ void ConfigurationWebServer::Initialise() {
         prefs.putString("scanline", request->hasParam("scanline", true) ? "true" : "false");
         prefs.putString("triangle", request->hasParam("triangle", true) ? "true" : "false");
         prefs.putString("infotext", request->hasParam("infotext", true) ? "true" : "false");
+        prefs.putString("zoomtap", request->hasParam("zoomtap", true) ? "true" : "false");
+        prefs.putString("listswipe", request->hasParam("listswipe", true) ? "true" : "false");
+        prefs.putString("lock", request->hasParam("lock", true) ? "true" : "false");
+        prefs.putString("heatmap", request->hasParam("heatmap", true) ? "true" : "false");
+        prefs.putString("typeicon", request->hasParam("typeicon", true) ? "true" : "false");
+        TrySaveParam("unitsystem");
         prefs.end();
 
         request->send(200, "text/html", "Saved - restarting device...");
+        ESP.restart();
+        }
+    );
+
+    // Handle Wi-Fi reset request: clears saved credentials and restarts into WiFiManager's setup portal
+    server.on("/wifi-reset", HTTP_POST, [&](AsyncWebServerRequest* request) {
+        Serial.println("[POST] Handling Wi-Fi reset request...");
+
+        if (wifiManager == nullptr) {
+            request->send(500, "text/html", "Wi-Fi manager not available.");
+            return;
+        }
+
+        request->send(200, "text/html", "Wi-Fi settings cleared - restarting into setup mode...");
+        wifiManager->resetSettings();
         ESP.restart();
         }
     );
@@ -214,4 +332,11 @@ const String ConfigurationWebServer::GetStoredString(const char* key)
     const String value = prefs.getString(key, "");
     prefs.end();
     return value;
+}
+
+void ConfigurationWebServer::SetStoredString(const char* key, const String& value)
+{
+    prefs.begin("config", false);
+    prefs.putString(key, value);
+    prefs.end();
 }

@@ -58,6 +58,7 @@ void setup()
   wm.autoConnect(WiFiManagerHelpers::WiFiManagerName);
 
   // begin background server for configuration
+  configServer.AttachWiFiManager(wm);
   configServer.Initialise();
 
   // initialise aircraft manager
@@ -85,4 +86,3 @@ void loop()
   aircraftManager.Draw(backbuffer);
   backbuffer.pushSprite(0, 0);
 }
-

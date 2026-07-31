@@ -1,6 +1,7 @@
 #pragma once
 
 #include <WiFiManager.h>
+#include "LGFX.h"
 
 namespace WiFiManagerHelpers
 {
@@ -17,9 +18,12 @@ namespace WiFiManagerHelpers
 
             const int lineHeight = tft.fontHeight() + 10;
             const int screenSize = 240;
-            tft.drawCenterString("- SETUP -", screenSize / 2, screenSize / 2 - lineHeight);
-            tft.drawCentreString("Connect to this WiFi hotspot:", screenSize / 2, screenSize / 2);
-            tft.drawCenterString(WiFiManagerName, screenSize / 2, screenSize / 2 + lineHeight);
+            const int centreY = screenSize / 2;
+
+            tft.drawCentreString("- SETUP -", screenSize / 2, centreY - lineHeight - lineHeight / 2);
+            tft.drawCentreString("Connect to WiFi hotspot:", screenSize / 2, centreY - lineHeight / 2);
+            tft.drawCentreString(WiFiManagerName, screenSize / 2, centreY + lineHeight / 2);
+            tft.drawCentreString("Then open: " + WiFi.softAPIP().toString(), screenSize / 2, centreY + lineHeight + lineHeight / 2);
             }
         );
     }
